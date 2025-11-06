@@ -1,6 +1,6 @@
 import { TbColorFilter, TbBorderCornerIos } from "react-icons/tb";
 import { BsBorderWidth } from "react-icons/bs";
-import { ArrowUp, ArrowDown, Copy, Trash } from "lucide-react";
+import { ArrowUp, ArrowDown, Copy, Trash, Crop } from "lucide-react";
 import { MdOpacity } from "react-icons/md";
 import { ITextProps } from "fabric";
 import * as fabric from "fabric";
@@ -21,6 +21,7 @@ import Group from "./Group";
 import ImageFilters from "./ImageFilters";
 import Text from "./Text";
 import ImageRadius from "./ImageRadius";
+import ImageCrop from "./ImageCrop";
 import { cn, parseLinearGradientString } from "@/lib/utils";
 
 export const Tools = () => {
@@ -259,6 +260,19 @@ export const Tools = () => {
         {/* image */}
         {activeElement?.type === "image" && (
           <>
+            <div className="flex items-center h-full justify-center">
+              <HovercardGlobal
+                trigger={
+                  <Hint label="Crop & Frame" side="bottom" sideOffset={5}>
+                    <Button size="icon" variant="ghost">
+                      <Crop className="size-4" />
+                    </Button>
+                  </Hint>
+                }
+                content={<ImageCrop />}
+                side={"bottom"}
+              />
+            </div>
             <div className="flex items-center h-full justify-center">
               <HovercardGlobal
                 trigger={
