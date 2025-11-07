@@ -562,7 +562,16 @@ function debounce(func, wait) {
 function saveState() {
     if (pauseSaving) return;
 
-    const json = JSON.stringify(canvas.toJSON(['variable', 'isFrame', 'frameShape', 'aspectRatio', 'originalImageUrl']));
+    const json = JSON.stringify(canvas.toJSON([
+        'variable',
+        'isFrame',
+        'frameShape',
+        'aspectRatio',
+        'originalImageUrl',
+        'contentOffsetX',
+        'contentOffsetY',
+        'contentScale'
+    ]));
     if (previousJson !== json) {
         undoStack.push(json);
         previousJson = json;
@@ -885,22 +894,28 @@ function applyAspectRatioToFrame(img, frameShape, frameWidth, frameHeight, frame
     const imgWidth = img.width;
     const imgHeight = img.height;
 
-    // Image always uses contain mode (appears complete) - use Math.min to fit entire image
-    // Math.min ensures the entire image fits within the frame, leaving blank space if needed
-    const scaleFactorX = Math.max(frameWidth / imgWidth);
-    const scaleFactorY = Math.max(frameHeight / imgHeight)
-    // Set scale absolutely (not multiply) to ensure image fits completely
+    // OBJECT-FIT: COVER behavior
+    // Calculate scale factor to ensure image COVERS the entire frame
+    // Use Math.max to ensure the image fills the frame completely (some content may be cropped)
+    const scaleFactor = Math.max(frameWidth / imgWidth, frameHeight / imgHeight);
+
+    // Apply same scale to both dimensions to maintain aspect ratio
     img.set({
-        scaleX: scaleFactorX,
-        scaleY: scaleFactorY,
+        scaleX: scaleFactor,
+        scaleY: scaleFactor,
     });
 
-    // Create clip path based on frame shape
+    // Calculate scaled dimensions
+    const scaledWidth = imgWidth * scaleFactor;
+    const scaledHeight = imgHeight * scaleFactor;
+
+    // Create clip path based on frame shape to hide overflow content
     let clipPath;
     if (frameShape === 'square') {
+        // Clip path dimensions in image coordinates (before scaling)
         clipPath = new fabric.Rect({
-            width: imgWidth,
-            height: imgHeight,
+            width: frameWidth / scaleFactor,
+            height: frameHeight / scaleFactor,
             rx: 0,
             ry: 0,
             originX: 'center',
@@ -908,19 +923,20 @@ function applyAspectRatioToFrame(img, frameShape, frameWidth, frameHeight, frame
         });
     } else if (frameShape === 'circle') {
         clipPath = new fabric.Circle({
-            radius: frameWidth / 2,
+            radius: (frameWidth / 2) / scaleFactor,
             originX: 'center',
             originY: 'center',
         });
     } else if (frameShape === 'triangle') {
         clipPath = new fabric.Triangle({
-            width: frameWidth,
-            height: frameHeight,
+            width: frameWidth / scaleFactor,
+            height: frameHeight / scaleFactor,
             originX: 'center',
             originY: 'center',
         });
     }
 
+    // Set image properties with content position storage
     img.set({
         clipPath: clipPath,
         left: frameProps.left,
@@ -932,6 +948,10 @@ function applyAspectRatioToFrame(img, frameShape, frameWidth, frameHeight, frame
         aspectRatio: frameProps.aspectRatio,
         variable: frameProps.variable,
         originalImageUrl: originalImageUrl,
+        // Store content position and scale for crop functionality
+        contentOffsetX: 0, // Center position (can be adjusted for crop)
+        contentOffsetY: 0, // Center position (can be adjusted for crop)
+        contentScale: scaleFactor, // Store the cover scale factor
     });
 }
 
@@ -1076,7 +1096,7 @@ function copyObject() {
     if (activeObject) {
         activeObject.clone((cloned) => {
             copiedObject = cloned;
-        }, ['variable', 'isFrame', 'frameShape', 'aspectRatio', 'originalImageUrl']);
+        }, ['variable', 'isFrame', 'frameShape', 'aspectRatio', 'originalImageUrl', 'contentOffsetX', 'contentOffsetY', 'contentScale']);
     }
 }
 
@@ -1092,7 +1112,7 @@ function pasteObject() {
             copiedObject = cloned;
             canvas.setActiveObject(cloned);
             canvas.renderAll();
-        }, ['variable', 'isFrame', 'frameShape', 'aspectRatio', 'originalImageUrl']);
+        }, ['variable', 'isFrame', 'frameShape', 'aspectRatio', 'originalImageUrl', 'contentOffsetX', 'contentOffsetY', 'contentScale']);
     }
 }
 
@@ -1233,7 +1253,16 @@ function applyZoom() {
 // Save to localStorage with custom properties
 function saveToLocalStorage() {
     try {
-        const json = JSON.stringify(canvas.toJSON(['variable', 'isFrame', 'frameShape', 'aspectRatio', 'originalImageUrl']));
+        const json = JSON.stringify(canvas.toJSON([
+            'variable',
+            'isFrame',
+            'frameShape',
+            'aspectRatio',
+            'originalImageUrl',
+            'contentOffsetX',
+            'contentOffsetY',
+            'contentScale'
+        ]));
         localStorage.setItem('ebookify-canvas', json);
         localStorage.setItem('ebookify-canvas-backup', json); // Backup
         alert('Rascunho salvo com sucesso!');
@@ -1581,7 +1610,7 @@ function setupEventListeners() {
                 canvas.add(cloned);
                 canvas.setActiveObject(cloned);
                 canvas.renderAll();
-            }, ['variable', 'isFrame', 'frameShape', 'aspectRatio', 'originalImageUrl']);
+            }, ['variable', 'isFrame', 'frameShape', 'aspectRatio', 'originalImageUrl', 'contentOffsetX', 'contentOffsetY', 'contentScale']);
         }
     });
 
