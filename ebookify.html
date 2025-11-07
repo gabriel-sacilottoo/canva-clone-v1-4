@@ -154,6 +154,38 @@
             background: rgba(220, 38, 38, 1);
             transform: scale(1.1);
         }
+
+        /* Edit mode styles */
+        .edit-mode-indicator {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(16, 185, 129, 0.95);
+            color: white;
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-weight: 600;
+            font-size: 14px;
+            z-index: 2500;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+            display: none;
+            align-items: center;
+            gap: 8px;
+            pointer-events: none;
+            user-select: none;
+        }
+        .edit-mode-indicator.show {
+            display: flex;
+        }
+
+        /* Cursor styles */
+        .canvas-grab {
+            cursor: grab !important;
+        }
+        .canvas-grabbing {
+            cursor: grabbing !important;
+        }
     </style>
 </head>
 <body class="bg-background-light dark:bg-background-dark font-body text-text-light-primary dark:text-dark-primary antialiased">
@@ -462,6 +494,12 @@
 <input type="file" id="image-upload" accept="image/*" style="display: none;">
 <input type="file" id="frame-image-upload" accept="image/*" style="display: none;">
 
+<!-- Edit Mode Indicator -->
+<div id="edit-mode-indicator" class="edit-mode-indicator">
+    <span class="material-symbols-outlined text-lg">drag_pan</span>
+    <span>Modo de Edição: Arraste para reposicionar a imagem</span>
+</div>
+
 <script>
 // Global variables
 let canvas;
@@ -473,6 +511,15 @@ let zoomLevel = 1;
 let activeObject = null;
 let draggedLayerIndex = null;
 let copiedObject = null;
+
+// Content editing mode variables
+let isEditMode = false;
+let editingObject = null;
+let isPanning = false;
+let panStartX = 0;
+let panStartY = 0;
+let initialOffsetX = 0;
+let initialOffsetY = 0;
 
 // Canvas base dimensions
 const CANVAS_WIDTH = 420;
@@ -537,6 +584,68 @@ function initCanvas() {
         }
     });
 
+    // Add double-click event listener for edit mode
+    canvas.on('mouse:dblclick', function(e) {
+        if (e.target && e.target.isFrame && e.target.type === 'image') {
+            enterEditMode(e.target);
+        }
+    });
+
+    // Add mouse events for panning in edit mode
+    canvas.on('mouse:down', function(e) {
+        if (isEditMode && editingObject && e.target === editingObject) {
+            isPanning = true;
+            const pointer = canvas.getPointer(e.e);
+            panStartX = pointer.x;
+            panStartY = pointer.y;
+            initialOffsetX = editingObject.contentOffsetX || 0;
+            initialOffsetY = editingObject.contentOffsetY || 0;
+
+            // Change cursor
+            canvas.defaultCursor = 'grabbing';
+            canvas.setCursor('grabbing');
+
+            // Prevent object from being moved/scaled
+            canvas.selection = false;
+            editingObject.selectable = false;
+        } else if (isEditMode && !e.target) {
+            // Click outside to exit edit mode
+            exitEditMode();
+        }
+    });
+
+    canvas.on('mouse:move', function(e) {
+        if (isEditMode && isPanning && editingObject) {
+            const pointer = canvas.getPointer(e.e);
+            const deltaX = pointer.x - panStartX;
+            const deltaY = pointer.y - panStartY;
+
+            // Calculate new offsets
+            const newOffsetX = initialOffsetX + deltaX;
+            const newOffsetY = initialOffsetY + deltaY;
+
+            // Apply offsets by adjusting the image position within clipPath
+            applyContentOffset(editingObject, newOffsetX, newOffsetY);
+
+            canvas.requestRenderAll();
+        }
+    });
+
+    canvas.on('mouse:up', function(e) {
+        if (isPanning && editingObject) {
+            isPanning = false;
+            canvas.defaultCursor = 'grab';
+            canvas.setCursor('grab');
+
+            // Re-enable selection
+            canvas.selection = true;
+            editingObject.selectable = true;
+
+            // Save state after panning
+            saveState();
+        }
+    });
+
     // Load from localStorage if exists
     loadFromLocalStorage();
 
@@ -556,6 +665,104 @@ function debounce(func, wait) {
         clearTimeout(timeout);
         timeout = setTimeout(later, wait);
     };
+}
+
+// Enter edit mode for content panning
+function enterEditMode(obj) {
+    if (!obj || !obj.isFrame || obj.type !== 'image') return;
+
+    isEditMode = true;
+    editingObject = obj;
+
+    // Show indicator
+    const indicator = document.getElementById('edit-mode-indicator');
+    indicator.classList.add('show');
+    setTimeout(() => {
+        indicator.classList.remove('show');
+    }, 3000);
+
+    // Change cursor to grab
+    canvas.defaultCursor = 'grab';
+    canvas.setCursor('grab');
+
+    // Make object non-movable but keep it selected
+    obj.set({
+        lockMovementX: true,
+        lockMovementY: true,
+        lockRotation: true,
+        lockScalingX: true,
+        lockScalingY: true,
+        hasControls: false,
+        hasBorders: true,
+        borderColor: '#10B981',
+        borderDashArray: [5, 5],
+    });
+
+    canvas.setActiveObject(obj);
+    canvas.requestRenderAll();
+}
+
+// Exit edit mode
+function exitEditMode() {
+    if (!isEditMode) return;
+
+    isEditMode = false;
+
+    // Hide indicator
+    document.getElementById('edit-mode-indicator').classList.remove('show');
+
+    // Restore cursor
+    canvas.defaultCursor = 'default';
+    canvas.setCursor('default');
+
+    // Restore object properties
+    if (editingObject) {
+        editingObject.set({
+            lockMovementX: false,
+            lockMovementY: false,
+            lockRotation: false,
+            lockScalingX: false,
+            lockScalingY: false,
+            hasControls: true,
+            hasBorders: true,
+            borderColor: 'rgba(0, 123, 255, 1)',
+            borderDashArray: null,
+        });
+
+        // Reapply corner-only handles
+        editingObject.setControlsVisibility({
+            mt: false, mb: false, ml: false, mr: false,
+            tl: true, tr: true, bl: true, br: true, mtr: true,
+        });
+    }
+
+    editingObject = null;
+    isPanning = false;
+    canvas.selection = true;
+    canvas.requestRenderAll();
+}
+
+// Apply content offset (pan the image within the frame)
+function applyContentOffset(obj, offsetX, offsetY) {
+    if (!obj || !obj.clipPath) return;
+
+    // Store the offsets
+    obj.contentOffsetX = offsetX;
+    obj.contentOffsetY = offsetY;
+
+    // Apply translation to clipPath to simulate content movement
+    // The clipPath position changes to move the visible portion of the image
+    const scaleFactor = obj.contentScale || 1;
+
+    // Calculate the offset in the original image coordinate system
+    const imgOffsetX = -offsetX / scaleFactor;
+    const imgOffsetY = -offsetY / scaleFactor;
+
+    // Update clipPath position to shift the visible area
+    obj.clipPath.set({
+        left: imgOffsetX,
+        top: imgOffsetY,
+    });
 }
 
 // Save state for undo/redo with custom properties
@@ -845,7 +1052,9 @@ function addImageToFrame(file) {
             left: activeObject.left,
             top: activeObject.top,
             variable: activeObject.variable || '',
-            aspectRatio: activeObject.aspectRatio || 'none',
+            aspectRatio: activeObject.aspectRatio || '4:3',
+            contentOffsetX: 0,
+            contentOffsetY: 0,
         };
 
         // Get frame dimensions
@@ -949,10 +1158,20 @@ function applyAspectRatioToFrame(img, frameShape, frameWidth, frameHeight, frame
         variable: frameProps.variable,
         originalImageUrl: originalImageUrl,
         // Store content position and scale for crop functionality
-        contentOffsetX: 0, // Center position (can be adjusted for crop)
-        contentOffsetY: 0, // Center position (can be adjusted for crop)
+        contentOffsetX: frameProps.contentOffsetX || 0, // Center position (can be adjusted for crop)
+        contentOffsetY: frameProps.contentOffsetY || 0, // Center position (can be adjusted for crop)
         contentScale: scaleFactor, // Store the cover scale factor
     });
+
+    // Apply existing offsets if they exist (restore pan position)
+    if (frameProps.contentOffsetX || frameProps.contentOffsetY) {
+        const imgOffsetX = -(frameProps.contentOffsetX || 0) / scaleFactor;
+        const imgOffsetY = -(frameProps.contentOffsetY || 0) / scaleFactor;
+        img.clipPath.set({
+            left: imgOffsetX,
+            top: imgOffsetY,
+        });
+    }
 }
 
 // Change aspect ratio
@@ -977,6 +1196,8 @@ function changeAspectRatio(newRatio) {
         top: activeObject.top,
         variable: activeObject.variable || '',
         aspectRatio: newRatio,
+        contentOffsetX: activeObject.contentOffsetX || 0,
+        contentOffsetY: activeObject.contentOffsetY || 0,
     };
 
     if (activeObject.originalImageUrl) {
@@ -1389,6 +1610,13 @@ function setupEventListeners() {
 
     // Keyboard shortcuts
     document.addEventListener('keydown', (e) => {
+        // ESC key to exit edit mode
+        if (e.key === 'Escape' && isEditMode) {
+            e.preventDefault();
+            exitEditMode();
+            return;
+        }
+
         if (e.ctrlKey || e.metaKey) {
             if (e.key === 'c' || e.key === 'C') {
                 e.preventDefault();
