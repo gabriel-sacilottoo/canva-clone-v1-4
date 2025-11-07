@@ -260,13 +260,12 @@
 <!-- Aspect Ratio -->
 <label class="block text-sm font-medium text-text-light-secondary dark:text-dark-secondary">Proporções</label>
 <select id="aspect-ratio" class="w-full bg-gray-50 dark:bg-gray-800 border-gray-300 dark:border-gray-600 rounded-md shadow-sm text-sm focus:ring-primary focus:border-primary mt-1">
-<option value="none">Nenhuma</option>
 <option value="1:1">1:1 (Quadrado)</option>
+<option value="4:3" selected>4:3 (Padrão)</option>
 <option value="16:9">16:9 (Widescreen)</option>
-<option value="4:3">4:3 (Padrão)</option>
-<option value="21:9">21:9 (Ultrawide)</option>
+<option value="3:2">3:2 (Paisagem)</option>
+<option value="2:3">2:3 (Retrato)</option>
 <option value="9:16">9:16 (Vertical)</option>
-<option value="3:4">3:4 (Retrato)</option>
 </select>
 
 <label class="block text-sm font-medium text-text-light-secondary dark:text-dark-secondary mt-3">Adicionar Imagem à Moldura</label>
@@ -481,13 +480,12 @@ const CANVAS_HEIGHT = 594;
 
 // Aspect ratio presets
 const ASPECT_RATIOS = {
-    'none': null,
     '1:1': 1,
-    '16:9': 16/9,
     '4:3': 4/3,
-    '21:9': 21/9,
+    '16:9': 16/9,
+    '3:2': 3/2,
+    '2:3': 2/3,
     '9:16': 9/16,
-    '3:4': 3/4,
 };
 
 // Initialize canvas
@@ -513,6 +511,31 @@ function initCanvas() {
     canvas.on('object:scaling', debounce(saveState, 300));
     canvas.on('object:rotating', debounce(saveState, 300));
     canvas.on('text:changed', debounce(saveState, 500));
+
+    // Enforce aspect ratio during scaling for frames
+    canvas.on('object:scaling', function(e) {
+        const obj = e.target;
+        if (obj && obj.isFrame && obj.aspectRatio && ASPECT_RATIOS[obj.aspectRatio]) {
+            const ratio = ASPECT_RATIOS[obj.aspectRatio];
+
+            // Lock aspect ratio during scaling
+            const newWidth = obj.width * obj.scaleX;
+            const newHeight = newWidth / ratio;
+
+            obj.set({
+                height: newHeight / obj.scaleY,
+                scaleY: obj.scaleX
+            });
+
+            // Update clipPath to match new dimensions
+            if (obj.type === 'image' && obj.clipPath) {
+                obj.clipPath.set({
+                    width: obj.width,
+                    height: obj.height,
+                });
+            }
+        }
+    });
 
     // Load from localStorage if exists
     loadFromLocalStorage();
@@ -670,7 +693,7 @@ function updatePropertiesPanel() {
         document.getElementById('image-frame-section').classList.remove('hidden');
         document.getElementById('image-variable-section').classList.remove('hidden');
         document.getElementById('image-variable').value = activeObject.variable || '';
-        document.getElementById('aspect-ratio').value = activeObject.aspectRatio || 'none';
+        document.getElementById('aspect-ratio').value = activeObject.aspectRatio || '4:3';
 
         // Show preview if image exists
         if (activeObject.type === 'image' && activeObject.originalImageUrl) {
@@ -757,58 +780,45 @@ function addText() {
 // Add image frame
 function addImageFrame(frameShape) {
     let frame;
-    const frameSize = 150;
+    const defaultAspectRatio = '4:3';
+    const ratio = ASPECT_RATIOS[defaultAspectRatio];
+    const baseSize = 200;
 
-    switch(frameShape) {
-        case 'square':
-            frame = new fabric.Rect({
-                left: 100,
-                top: 100,
-                width: frameSize,
-                height: frameSize,
-                fill: '#E5E7EB',
-                stroke: '#9CA3AF',
-                strokeWidth: 2,
-                rx: 0,
-                ry: 0,
-                isFrame: true,
-                frameShape: 'square',
-                aspectRatio: 'none',
-                variable: '',
-            });
-            break;
-        case 'circle':
-            frame = new fabric.Circle({
-                left: 100,
-                top: 100,
-                radius: frameSize / 2,
-                fill: '#E5E7EB',
-                stroke: '#9CA3AF',
-                strokeWidth: 2,
-                isFrame: true,
-                frameShape: 'circle',
-                aspectRatio: 'none',
-                variable: '',
-            });
-            break;
-        case 'triangle':
-            frame = new fabric.Triangle({
-                left: 100,
-                top: 100,
-                width: frameSize,
-                height: frameSize,
-                fill: '#E5E7EB',
-                stroke: '#9CA3AF',
-                strokeWidth: 2,
-                isFrame: true,
-                frameShape: 'triangle',
-                aspectRatio: 'none',
-                variable: '',
-            });
-            break;
-    }
+    // Calculate dimensions based on default aspect ratio 4:3
+    const frameWidth = baseSize;
+    const frameHeight = baseSize / ratio;
+
+    // Always create rectangular frame with aspect ratio
+    frame = new fabric.Rect({
+        left: 100,
+        top: 100,
+        width: frameWidth,
+        height: frameHeight,
+        fill: '#E5E7EB',
+        stroke: '#9CA3AF',
+        strokeWidth: 2,
+        rx: frameShape === 'circle' ? frameHeight / 2 : 0,
+        ry: frameShape === 'circle' ? frameHeight / 2 : 0,
+        isFrame: true,
+        frameShape: frameShape,
+        aspectRatio: defaultAspectRatio,
+        variable: '',
+    });
 
     if (frame) {
+        // Configure corner-only handles
+        frame.setControlsVisibility({
+            mt: false, // middle top
+            mb: false, // middle bottom
+            ml: false, // middle left
+            mr: false, // middle right
+            tl: true,  // top left
+            tr: true,  // top right
+            bl: true,  // bottom left
+            br: true,  // bottom right
+            mtr: true, // rotation handle
+        });
+
         canvas.add(frame);
         canvas.setActiveObject(frame);
         canvas.renderAll();
@@ -845,6 +855,19 @@ function addImageToFrame(file) {
 
         fabric.Image.fromURL(imageUrl, (img) => {
             applyAspectRatioToFrame(img, frameShape, frameWidth, frameHeight, frameProps, imageUrl);
+
+            // Configure corner-only handles for image frame
+            img.setControlsVisibility({
+                mt: false, // middle top
+                mb: false, // middle bottom
+                ml: false, // middle left
+                mr: false, // middle right
+                tl: true,  // top left
+                tr: true,  // top right
+                bl: true,  // bottom left
+                br: true,  // bottom right
+                mtr: true, // rotation handle
+            });
 
             canvas.remove(activeObject);
             canvas.add(img);
@@ -920,20 +943,6 @@ function changeAspectRatio(newRatio) {
     let newWidth, newHeight;
 
     // Calculate new dimensions based on aspect ratio
-    if (newRatio === 'none') {
-        // Keep current shape
-        if (activeObject.originalImageUrl) {
-            // Reload with current shape
-            reloadFrameImage(activeObject.frameShape);
-        } else {
-            // Just update the property
-            activeObject.aspectRatio = newRatio;
-            saveState();
-        }
-        return;
-    }
-
-    // Convert to rectangular frame with aspect ratio
     const ratio = ASPECT_RATIOS[newRatio];
     if (ratio >= 1) {
         newWidth = baseSize;
@@ -954,6 +963,12 @@ function changeAspectRatio(newRatio) {
         // Reload image with new frame
         fabric.Image.fromURL(activeObject.originalImageUrl, (img) => {
             applyAspectRatioToFrame(img, 'square', newWidth, newHeight, frameProps, activeObject.originalImageUrl);
+
+            // Configure corner-only handles
+            img.setControlsVisibility({
+                mt: false, mb: false, ml: false, mr: false,
+                tl: true, tr: true, bl: true, br: true, mtr: true,
+            });
 
             const index = canvas.getObjects().indexOf(activeObject);
             canvas.remove(activeObject);
@@ -980,6 +995,12 @@ function changeAspectRatio(newRatio) {
             variable: frameProps.variable,
         });
 
+        // Configure corner-only handles
+        newFrame.setControlsVisibility({
+            mt: false, mb: false, ml: false, mr: false,
+            tl: true, tr: true, bl: true, br: true, mtr: true,
+        });
+
         const index = canvas.getObjects().indexOf(activeObject);
         canvas.remove(activeObject);
         canvas.insertAt(newFrame, index);
@@ -989,134 +1010,56 @@ function changeAspectRatio(newRatio) {
     }
 }
 
-// Reload frame image (when changing back to 'none')
+// Reload frame image (deprecated - kept for compatibility)
 function reloadFrameImage(shape) {
-    if (!activeObject || !activeObject.originalImageUrl) return;
-
-    const frameProps = {
-        left: activeObject.left,
-        top: activeObject.top,
-        variable: activeObject.variable || '',
-        aspectRatio: 'none',
-    };
-
-    const frameSize = 150;
-    let frameWidth, frameHeight;
-
-    if (shape === 'square') {
-        frameWidth = frameHeight = frameSize;
-    } else if (shape === 'circle') {
-        frameWidth = frameHeight = frameSize;
-    } else if (shape === 'triangle') {
-        frameWidth = frameHeight = frameSize;
-    }
-
-    fabric.Image.fromURL(activeObject.originalImageUrl, (img) => {
-        applyAspectRatioToFrame(img, shape, frameWidth, frameHeight, frameProps, activeObject.originalImageUrl);
-
-        const index = canvas.getObjects().indexOf(activeObject);
-        canvas.remove(activeObject);
-        canvas.insertAt(img, index);
-        canvas.setActiveObject(img);
-        canvas.renderAll();
-        saveState();
-    });
+    // This function is no longer needed since we always use aspect ratios
+    console.warn('reloadFrameImage is deprecated');
 }
 
 // Delete frame image
 function deleteFrameImage() {
     if (!activeObject || !activeObject.isFrame) return;
 
-    const frameShape = activeObject.frameShape || 'square';
-    const aspectRatio = activeObject.aspectRatio || 'none';
+    const aspectRatio = activeObject.aspectRatio || '4:3';
     const frameProps = {
         left: activeObject.left,
         top: activeObject.top,
         variable: activeObject.variable || '',
     };
 
-    let newFrame;
-    const frameSize = 150;
+    // Create rectangular frame with aspect ratio
+    const ratio = ASPECT_RATIOS[aspectRatio];
+    let width, height;
 
-    if (aspectRatio !== 'none') {
-        // Create rectangular frame with aspect ratio
-        const ratio = ASPECT_RATIOS[aspectRatio];
-        let width, height;
-
-        if (ratio >= 1) {
-            width = 200;
-            height = 200 / ratio;
-        } else {
-            height = 200;
-            width = 200 * ratio;
-        }
-
-        newFrame = new fabric.Rect({
-            left: frameProps.left,
-            top: frameProps.top,
-            width: width,
-            height: height,
-            fill: '#E5E7EB',
-            stroke: '#9CA3AF',
-            strokeWidth: 2,
-            rx: 0,
-            ry: 0,
-            isFrame: true,
-            frameShape: 'square',
-            aspectRatio: aspectRatio,
-            variable: frameProps.variable,
-        });
+    if (ratio >= 1) {
+        width = 200;
+        height = 200 / ratio;
     } else {
-        // Create frame based on original shape
-        switch(frameShape) {
-            case 'square':
-                newFrame = new fabric.Rect({
-                    left: frameProps.left,
-                    top: frameProps.top,
-                    width: frameSize,
-                    height: frameSize,
-                    fill: '#E5E7EB',
-                    stroke: '#9CA3AF',
-                    strokeWidth: 2,
-                    rx: 0,
-                    ry: 0,
-                    isFrame: true,
-                    frameShape: 'square',
-                    aspectRatio: 'none',
-                    variable: frameProps.variable,
-                });
-                break;
-            case 'circle':
-                newFrame = new fabric.Circle({
-                    left: frameProps.left,
-                    top: frameProps.top,
-                    radius: frameSize / 2,
-                    fill: '#E5E7EB',
-                    stroke: '#9CA3AF',
-                    strokeWidth: 2,
-                    isFrame: true,
-                    frameShape: 'circle',
-                    aspectRatio: 'none',
-                    variable: frameProps.variable,
-                });
-                break;
-            case 'triangle':
-                newFrame = new fabric.Triangle({
-                    left: frameProps.left,
-                    top: frameProps.top,
-                    width: frameSize,
-                    height: frameSize,
-                    fill: '#E5E7EB',
-                    stroke: '#9CA3AF',
-                    strokeWidth: 2,
-                    isFrame: true,
-                    frameShape: 'triangle',
-                    aspectRatio: 'none',
-                    variable: frameProps.variable,
-                });
-                break;
-        }
+        height = 200;
+        width = 200 * ratio;
     }
+
+    const newFrame = new fabric.Rect({
+        left: frameProps.left,
+        top: frameProps.top,
+        width: width,
+        height: height,
+        fill: '#E5E7EB',
+        stroke: '#9CA3AF',
+        strokeWidth: 2,
+        rx: 0,
+        ry: 0,
+        isFrame: true,
+        frameShape: 'square',
+        aspectRatio: aspectRatio,
+        variable: frameProps.variable,
+    });
+
+    // Configure corner-only handles
+    newFrame.setControlsVisibility({
+        mt: false, mb: false, ml: false, mr: false,
+        tl: true, tr: true, bl: true, br: true, mtr: true,
+    });
 
     if (newFrame) {
         const index = canvas.getObjects().indexOf(activeObject);
