@@ -626,8 +626,6 @@ function initCanvas() {
 
             // Apply offsets by adjusting the image position within clipPath
             applyContentOffset(editingObject, newOffsetX, newOffsetY);
-
-            canvas.requestRenderAll();
         }
     });
 
@@ -744,7 +742,10 @@ function exitEditMode() {
 
 // Apply content offset (pan the image within the frame)
 function applyContentOffset(obj, offsetX, offsetY) {
-    if (!obj || !obj.clipPath) return;
+    if (!obj || !obj.clipPath) {
+        console.warn('applyContentOffset: invalid object or missing clipPath');
+        return;
+    }
 
     // Store the offsets
     obj.contentOffsetX = offsetX;
@@ -755,14 +756,32 @@ function applyContentOffset(obj, offsetX, offsetY) {
     const scaleFactor = obj.contentScale || 1;
 
     // Calculate the offset in the original image coordinate system
+    // Since clipPath has originX/Y center, left/top represents center position
+    // To pan the image right (show more of the left), move clipPath left (negative)
     const imgOffsetX = -offsetX / scaleFactor;
     const imgOffsetY = -offsetY / scaleFactor;
+
+    console.log('Applying offset:', {
+        offsetX, offsetY,
+        scaleFactor,
+        imgOffsetX, imgOffsetY,
+        clipPathBefore: { left: obj.clipPath.left, top: obj.clipPath.top }
+    });
 
     // Update clipPath position to shift the visible area
     obj.clipPath.set({
         left: imgOffsetX,
         top: imgOffsetY,
     });
+
+    console.log('clipPathAfter:', { left: obj.clipPath.left, top: obj.clipPath.top });
+
+    // Mark objects as dirty to force re-render
+    obj.clipPath.dirty = true;
+    obj.dirty = true;
+
+    // Force canvas to recognize the change and re-render
+    canvas.renderAll();
 }
 
 // Save state for undo/redo with custom properties
@@ -1119,29 +1138,41 @@ function applyAspectRatioToFrame(img, frameShape, frameWidth, frameHeight, frame
     const scaledHeight = imgHeight * scaleFactor;
 
     // Create clip path based on frame shape to hide overflow content
+    // Using center origin for proper positioning
     let clipPath;
+    const clipWidth = frameWidth / scaleFactor;
+    const clipHeight = frameHeight / scaleFactor;
+
     if (frameShape === 'square') {
-        // Clip path dimensions in image coordinates (before scaling)
         clipPath = new fabric.Rect({
-            width: frameWidth / scaleFactor,
-            height: frameHeight / scaleFactor,
+            width: clipWidth,
+            height: clipHeight,
             rx: 0,
             ry: 0,
+            left: 0,
+            top: 0,
             originX: 'center',
             originY: 'center',
+            absolutePositioned: false,
         });
     } else if (frameShape === 'circle') {
         clipPath = new fabric.Circle({
             radius: (frameWidth / 2) / scaleFactor,
+            left: 0,
+            top: 0,
             originX: 'center',
             originY: 'center',
+            absolutePositioned: false,
         });
     } else if (frameShape === 'triangle') {
         clipPath = new fabric.Triangle({
-            width: frameWidth / scaleFactor,
-            height: frameHeight / scaleFactor,
+            width: clipWidth,
+            height: clipHeight,
+            left: 0,
+            top: 0,
             originX: 'center',
             originY: 'center',
+            absolutePositioned: false,
         });
     }
 
