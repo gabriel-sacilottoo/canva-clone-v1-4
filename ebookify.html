@@ -751,36 +751,33 @@ function applyContentOffset(obj, offsetX, offsetY) {
     obj.contentOffsetX = offsetX;
     obj.contentOffsetY = offsetY;
 
-    // Apply translation to clipPath to simulate content movement
-    // The clipPath position changes to move the visible portion of the image
-    const scaleFactor = obj.contentScale || 1;
+    // Get the original frame position (where the visible area should be)
+    const frameLeft = obj.frameLeft || obj.left;
+    const frameTop = obj.frameTop || obj.top;
 
-    // Calculate the offset in the original image coordinate system
-    // Since clipPath has originX/Y center, left/top represents center position
-    // To pan the image right (show more of the left), move clipPath left (negative)
-    const imgOffsetX = -offsetX / scaleFactor;
-    const imgOffsetY = -offsetY / scaleFactor;
+    // Move the IMAGE, not the clipPath
+    // The clipPath stays fixed at frameLeft/frameTop (absolutePositioned: true)
+    // When we drag right (+offsetX), the image moves right, showing more of the left side
+    const newImageLeft = frameLeft + offsetX;
+    const newImageTop = frameTop + offsetY;
 
     console.log('Applying offset:', {
         offsetX, offsetY,
-        scaleFactor,
-        imgOffsetX, imgOffsetY,
-        clipPathBefore: { left: obj.clipPath.left, top: obj.clipPath.top }
+        frameLeft, frameTop,
+        newImageLeft, newImageTop,
+        imageBefore: { left: obj.left, top: obj.top }
     });
 
-    // Update clipPath position to shift the visible area
-    obj.clipPath.set({
-        left: imgOffsetX,
-        top: imgOffsetY,
+    // Move the image to the new position
+    obj.set({
+        left: newImageLeft,
+        top: newImageTop,
     });
 
-    console.log('clipPathAfter:', { left: obj.clipPath.left, top: obj.clipPath.top });
+    console.log('imageAfter:', { left: obj.left, top: obj.top });
 
-    // Mark objects as dirty to force re-render
-    obj.clipPath.dirty = true;
-    obj.dirty = true;
-
-    // Force canvas to recognize the change and re-render
+    // Mark object as dirty and force re-render
+    obj.setCoords(); // Update object coordinates
     canvas.renderAll();
 }
 
@@ -796,7 +793,9 @@ function saveState() {
         'originalImageUrl',
         'contentOffsetX',
         'contentOffsetY',
-        'contentScale'
+        'contentScale',
+        'frameLeft',
+        'frameTop'
     ]));
     if (previousJson !== json) {
         undoStack.push(json);
@@ -1138,7 +1137,7 @@ function applyAspectRatioToFrame(img, frameShape, frameWidth, frameHeight, frame
     const scaledHeight = imgHeight * scaleFactor;
 
     // Create clip path based on frame shape to hide overflow content
-    // Using center origin for proper positioning
+    // Using absolutePositioned: true to keep frame fixed while image moves
     let clipPath;
     const clipWidth = frameWidth / scaleFactor;
     const clipHeight = frameHeight / scaleFactor;
@@ -1149,30 +1148,30 @@ function applyAspectRatioToFrame(img, frameShape, frameWidth, frameHeight, frame
             height: clipHeight,
             rx: 0,
             ry: 0,
-            left: 0,
-            top: 0,
+            left: frameProps.left,
+            top: frameProps.top,
             originX: 'center',
             originY: 'center',
-            absolutePositioned: false,
+            absolutePositioned: true, // Keep frame fixed in canvas coordinates
         });
     } else if (frameShape === 'circle') {
         clipPath = new fabric.Circle({
             radius: (frameWidth / 2) / scaleFactor,
-            left: 0,
-            top: 0,
+            left: frameProps.left,
+            top: frameProps.top,
             originX: 'center',
             originY: 'center',
-            absolutePositioned: false,
+            absolutePositioned: true,
         });
     } else if (frameShape === 'triangle') {
         clipPath = new fabric.Triangle({
             width: clipWidth,
             height: clipHeight,
-            left: 0,
-            top: 0,
+            left: frameProps.left,
+            top: frameProps.top,
             originX: 'center',
             originY: 'center',
-            absolutePositioned: false,
+            absolutePositioned: true,
         });
     }
 
@@ -1188,19 +1187,21 @@ function applyAspectRatioToFrame(img, frameShape, frameWidth, frameHeight, frame
         aspectRatio: frameProps.aspectRatio,
         variable: frameProps.variable,
         originalImageUrl: originalImageUrl,
+        // Store frame position (fixed position for the visible area)
+        frameLeft: frameProps.left,
+        frameTop: frameProps.top,
         // Store content position and scale for crop functionality
-        contentOffsetX: frameProps.contentOffsetX || 0, // Center position (can be adjusted for crop)
-        contentOffsetY: frameProps.contentOffsetY || 0, // Center position (can be adjusted for crop)
-        contentScale: scaleFactor, // Store the cover scale factor
+        contentOffsetX: frameProps.contentOffsetX || 0,
+        contentOffsetY: frameProps.contentOffsetY || 0,
+        contentScale: scaleFactor,
     });
 
     // Apply existing offsets if they exist (restore pan position)
     if (frameProps.contentOffsetX || frameProps.contentOffsetY) {
-        const imgOffsetX = -(frameProps.contentOffsetX || 0) / scaleFactor;
-        const imgOffsetY = -(frameProps.contentOffsetY || 0) / scaleFactor;
-        img.clipPath.set({
-            left: imgOffsetX,
-            top: imgOffsetY,
+        // Move the image, not the clipPath
+        img.set({
+            left: frameProps.left + (frameProps.contentOffsetX || 0),
+            top: frameProps.top + (frameProps.contentOffsetY || 0),
         });
     }
 }
@@ -1348,7 +1349,7 @@ function copyObject() {
     if (activeObject) {
         activeObject.clone((cloned) => {
             copiedObject = cloned;
-        }, ['variable', 'isFrame', 'frameShape', 'aspectRatio', 'originalImageUrl', 'contentOffsetX', 'contentOffsetY', 'contentScale']);
+        }, ['variable', 'isFrame', 'frameShape', 'aspectRatio', 'originalImageUrl', 'contentOffsetX', 'contentOffsetY', 'contentScale', 'frameLeft', 'frameTop']);
     }
 }
 
@@ -1360,11 +1361,16 @@ function pasteObject() {
                 left: cloned.left + 10,
                 top: cloned.top + 10,
             });
+            // Update frameLeft/frameTop if it's a frame
+            if (cloned.isFrame) {
+                cloned.frameLeft = (cloned.frameLeft || cloned.left) + 10;
+                cloned.frameTop = (cloned.frameTop || cloned.top) + 10;
+            }
             canvas.add(cloned);
             copiedObject = cloned;
             canvas.setActiveObject(cloned);
             canvas.renderAll();
-        }, ['variable', 'isFrame', 'frameShape', 'aspectRatio', 'originalImageUrl', 'contentOffsetX', 'contentOffsetY', 'contentScale']);
+        }, ['variable', 'isFrame', 'frameShape', 'aspectRatio', 'originalImageUrl', 'contentOffsetX', 'contentOffsetY', 'contentScale', 'frameLeft', 'frameTop']);
     }
 }
 
@@ -1513,7 +1519,9 @@ function saveToLocalStorage() {
             'originalImageUrl',
             'contentOffsetX',
             'contentOffsetY',
-            'contentScale'
+            'contentScale',
+            'frameLeft',
+            'frameTop'
         ]));
         localStorage.setItem('ebookify-canvas', json);
         localStorage.setItem('ebookify-canvas-backup', json); // Backup
@@ -1866,10 +1874,15 @@ function setupEventListeners() {
                     left: activeObject.left + 10,
                     top: activeObject.top + 10,
                 });
+                // Update frameLeft/frameTop if it's a frame
+                if (cloned.isFrame) {
+                    cloned.frameLeft = (cloned.frameLeft || cloned.left) + 10;
+                    cloned.frameTop = (cloned.frameTop || cloned.top) + 10;
+                }
                 canvas.add(cloned);
                 canvas.setActiveObject(cloned);
                 canvas.renderAll();
-            }, ['variable', 'isFrame', 'frameShape', 'aspectRatio', 'originalImageUrl', 'contentOffsetX', 'contentOffsetY', 'contentScale']);
+            }, ['variable', 'isFrame', 'frameShape', 'aspectRatio', 'originalImageUrl', 'contentOffsetX', 'contentOffsetY', 'contentScale', 'frameLeft', 'frameTop']);
         }
     });
 
